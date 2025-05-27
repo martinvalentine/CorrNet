@@ -176,5 +176,7 @@ cython_debug/
 # PyPI configuration file
 .pypirc
 /dataset/VSL_V0/
+/dataset/VSL_V1/
 /ctcdecode/
 /software/
+/work_dir/

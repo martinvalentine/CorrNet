@@ -201,6 +201,16 @@ class Processor():
             dataset_list = zip(["train", "train_eval", "dev", "test"], [True, False, False, False]) 
         elif self.arg.dataset == 'CSL-Daily':
             dataset_list = zip(["train", "train_eval", "dev", "test"], [True, False, False, False])
+        elif self.arg.dataset == 'VSL_V0':
+            dataset_list = zip(["train", "dev", "test"], [True, False, False])
+        elif self.arg.dataset == 'VSL_V1':
+            dataset_list = zip(["train", "dev", "test"], [True, False, False])
+        elif self.arg.dataset == 'VSL_V2':
+            dataset_list = zip(["train", "dev", "test"], [True, False, False])
+
+        # DEBUG
+        print("Dataset List: ", dataset_list)
+
         for idx, (mode, train_flag) in enumerate(dataset_list):
             arg = self.arg.feeder_args
             arg["prefix"] = self.arg.dataset_info['dataset_root']
@@ -209,8 +219,10 @@ class Processor():
             self.dataset[mode] = self.feeder(gloss_dict=self.gloss_dict, kernel_size= self.kernel_sizes, dataset=self.arg.dataset, **arg)
             self.data_loader[mode] = self.build_dataloader(self.dataset[mode], mode, train_flag)
         print("Loading data finished.")
+
     def init_fn(self, worker_id):
         np.random.seed(int(self.arg.random_seed)+worker_id)
+
     def build_dataloader(self, dataset, mode, train_flag):
         return torch.utils.data.DataLoader(
             dataset,

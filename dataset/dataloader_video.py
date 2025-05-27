@@ -63,7 +63,7 @@ class BaseFeeder(data.Dataset):
 
         # Load metadata: list of dicts with file paths and labels
         self.inputs_list = np.load(
-            f"./data/processed/{dataset}/{mode}_info.npy",
+            f"./preprocess/{dataset}/{mode}_info.npy",
             allow_pickle=True
         ).item()
         print(f"{mode} set, {len(self)} samples loaded")
