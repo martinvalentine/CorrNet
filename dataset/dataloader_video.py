@@ -13,7 +13,7 @@ import warnings
 warnings.simplefilter(action='ignore', category=FutureWarning)
 
 import numpy as np
-# import pyarrow as pa
+import pyarrow as pa
 from PIL import Image
 import torch.utils.data as data
 import matplotlib.pyplot as plt
@@ -24,49 +24,79 @@ sys.path.append("..")
 global kernel_sizes 
 
 class BaseFeeder(data.Dataset):
-    def __init__(self, prefix, gloss_dict, dataset='phoenix2014', drop_ratio=1, num_gloss=-1, mode="train", transform_mode=True,
-                 datatype="lmdb", frame_interval=1, image_scale=1.0, kernel_size=1, input_size=224):
-        self.mode = mode
+    def __init__(
+            self,
+            prefix,
+            gloss_dict,
+            dataset='VSL_V0',
+            drop_ratio=1,
+            num_gloss=-1,
+            mode="train",
+            transform_mode=True,
+            datatype="lmdb",
+            frame_interval=1,
+            image_scale=1.0,
+            kernel_size=1,
+            input_size=224
+    ):
+        self.mode = mode.lower()
+        assert self.mode in ["train", "test", "dev"], f"Invalid mode: {self.mode}"
+
         self.ng = num_gloss
+
         self.prefix = prefix
-        self.dict = gloss_dict
-        self.data_type = datatype
+        self.dict = gloss_dict  # mapping from gloss to index
         self.dataset = dataset
         self.input_size = input_size
-        global kernel_sizes 
+
+        # Set up global kernel_sizes used in collate_fn
+        global kernel_sizes
         kernel_sizes = kernel_size
-        self.frame_interval = frame_interval # not implemented for read_features()
-        self.image_scale = image_scale # not implemented for read_features()
-        self.feat_prefix = f"{prefix}/features/fullFrame-256x256px/{mode}"
+
+        # Frame sampling & resize params (not used by read_features)
+        self.frame_interval = frame_interval
+        self.image_scale = image_scale
+
+        self.feat_prefix = f"{prefix}/{mode}"
+
         self.transform_mode = "train" if transform_mode else "test"
-        self.inputs_list = np.load(f"./preprocess/{dataset}/{mode}_info.npy", allow_pickle=True).item()
-        print(mode, len(self))
+
+        # Load metadata: list of dicts with file paths and labels
+        self.inputs_list = np.load(
+            f"./data/processed/{dataset}/{mode}_info.npy",
+            allow_pickle=True
+        ).item()
+        print(f"{mode} set, {len(self)} samples loaded")
+
+        # Build transform function (Compose of several video transforms)
         self.data_aug = self.transform()
-        print("")
+        print(
+            f"{self.mode.capitalize()} transform loaded with frame interval = {self.frame_interval}, scale = {self.image_scale}")
+
 
     def __getitem__(self, idx):
-        if self.data_type == "video":
-            input_data, label, fi = self.read_video(idx)
-            input_data, label = self.normalize(input_data, label)
-            # input_data, label = self.normalize(input_data, label, fi['fileid'])
-            return input_data, torch.LongTensor(label), self.inputs_list[idx]['original_info']
-        elif self.data_type == "lmdb":
-            input_data, label, fi = self.read_lmdb(idx)
-            input_data, label = self.normalize(input_data, label)
-            return input_data, torch.LongTensor(label), self.inputs_list[idx]['original_info']
-        else:
-            input_data, label = self.read_features(idx)
-            return input_data, label, self.inputs_list[idx]['original_info']
+        # Fetch a single sample by index and apply normalization
+        video, label, info = self.read_video(idx)
+        video, label = self.normalize(video, label)
+        print(f"Fetching item #{idx}: video len = {len(video)}, label = {label}")
+        return video, torch.LongTensor(label), info
 
     def read_video(self, index):
         # load file info
         fi = self.inputs_list[index]
         if 'phoenix' in self.dataset:
-            img_folder = os.path.join(self.prefix, "features/fullFrame-256x256px/" + fi['folder'])  
+            img_folder = os.path.join(self.prefix, "features/fullFrame-256x256px/" + fi['folder'])
         elif self.dataset == 'CSL':
             img_folder = os.path.join(self.prefix, "features/fullFrame-256x256px/" + fi['folder'] + "/*.jpg")
         elif self.dataset == 'CSL-Daily':
             img_folder = os.path.join(self.prefix, fi['folder'])
+        elif 'VSL_V0' in self.dataset:
+            img_folder = os.path.join(self.prefix, fi['folder'])
+        elif 'VSL_V1' in self.dataset:
+            img_folder = os.path.join(self.prefix, fi['folder'])
+        elif 'VSL_V2' in self.dataset:
+            img_folder = os.path.join(self.prefix, fi['folder'])
+
         img_list = sorted(glob.glob(img_folder))
         img_list = img_list[int(torch.randint(0, self.frame_interval, [1]))::self.frame_interval]
         label_list = []
@@ -78,14 +108,19 @@ class BaseFeeder(data.Dataset):
         return [cv2.cvtColor(cv2.imread(img_path), cv2.COLOR_BGR2RGB) for img_path in img_list], label_list, fi
 
     def read_features(self, index):
-        # load file info
+        # Load pre-extracted feature .npy files
         fi = self.inputs_list[index]
-        data = np.load(f"./features/{self.mode}/{fi['fileid']}_features.npy", allow_pickle=True).item()
+        data = np.load(
+            f"./features/{self.mode}/{fi['fileid']}_features.npy",
+            allow_pickle=True
+        ).item()
         return data['features'], data['label']
 
     def normalize(self, video, label, file_id=None):
+        # Apply augmentation pipeline and mapping 8-bit RGB frames (0…255) into the range [–1, +1]
         video, label = self.data_aug(video, label, file_id)
-        video = video.float() / 127.5 - 1
+        video = video.float() / 127.5 - 1.0
+        print(f"Video tensor shape after normalization: {video.shape}, min = {video.min()}, max = {video.max()}")
         return video, label
 
     def transform(self):
@@ -121,14 +156,14 @@ class BaseFeeder(data.Dataset):
     def collate_fn(batch):
         batch = [item for item in sorted(batch, key=lambda x: len(x[0]), reverse=True)]
         video, label, info = list(zip(*batch))
-        
+
         left_pad = 0
         last_stride = 1
         total_stride = 1
-        global kernel_sizes 
+        global kernel_sizes
         for layer_idx, ks in enumerate(kernel_sizes):
             if ks[0] == 'K':
-                left_pad = left_pad * last_stride 
+                left_pad = left_pad * last_stride
                 left_pad += int((int(ks[1])-1)/2)
             elif ks[0] == 'P':
                 last_stride = int(ks[1])

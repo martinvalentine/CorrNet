@@ -1,0 +1,5 @@
+#dataset_root: /home/martinvalentine/Desktop/CSLR-VSL/data/processed/VSL_Sample/features/256x256px
+dataset_root: ./dataset/VSL_V1
+dict_path: ./preprocess/VSL_V1/gloss_dict.npy
+evaluation_dir: ./evaluation/slr_eval
+evaluation_prefix: vsl_v1-ground-truth
